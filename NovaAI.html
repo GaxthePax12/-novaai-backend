@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>NovaAI Pro Max v3</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+
+body {
+  font-family: Arial;
+  background: radial-gradient(circle at top, #0b0b1a, #000);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #a855f7;
+  border-radius: 10px;
+}
+
+.glass {
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.bubble {
+  animation: pop 0.15s ease;
+}
+
+@keyframes pop {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.typing::after {
+  content: "●●●";
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0% { opacity: 1; }
+  50% { opacity: 0.2; }
+  100% { opacity: 1; }
+}
+
+</style>
+
+</head>
+
+<body class="text-white flex items-center justify-center min-h-screen p-3">
+
+<div class="w-full max-w-5xl glass rounded-2xl overflow-hidden">
+
+<!-- HEADER -->
+<div class="p-4 flex justify-between items-center border-b border-white/10">
+
+  <div>
+    <h1 class="text-2xl font-bold text-purple-400">
+      NovaAI Pro Max v3
+    </h1>
+    <p class="text-xs opacity-70">
+      Smart AI • Tutor • Search • Voice
+    </p>
+  </div>
+
+  <div class="flex gap-2">
+
+    <button id="modeBtn"
+    class="px-3 py-2 rounded-xl bg-purple-600/30">
+      Mode: Assistant
+    </button>
+
+    <button id="voiceBtn"
+    class="px-3 py-2 rounded-xl bg-cyan-500/20">
+      🔊
+    </button>
+
+  </div>
+
+</div>
+
+<!-- CHAT -->
+<div id="chatBox" class="h-[520px] overflow-y-auto p-4 space-y-3"></div>
+
+<!-- INPUT -->
+<div class="p-4 border-t border-white/10 flex gap-2">
+
+<input id="userInput"
+class="flex-1 p-3 rounded-xl bg-black/40 border border-white/10 outline-none"
+placeholder="Ask NovaAI...">
+
+<button id="micBtn" class="px-4 bg-purple-500 rounded-xl">🎤</button>
+
+<button id="sendBtn"
+class="px-6 bg-purple-600 hover:bg-purple-500 rounded-xl font-bold">
+Send
+</button>
+
+</div>
+
+</div>
+
+<script>
+
+window.onload = () => {
+
+/* ---------------- SAFE CONFIG ---------------- */
+
+const CONFIG = {
+API_KEY: "",
+MODEL: "openai/gpt-4o-mini",
+RATE_LIMIT: 10
+};
+
+/* ---------------- STATE ---------------- */
+
+let mode = "assistant";
+let voiceEnabled = true;
+let history = [];
+let requests = [];
+
+let memory = JSON.parse(localStorage.getItem("novaMemory")) || {};
+
+/* ---------------- ELEMENTS ---------------- */
+
+const chatBox = document.getElementById("chatBox");
+const userInput = document.getElementById("userInput");
+const sendBtn = document.getElementById("sendBtn");
+const modeBtn = document.getElementById("modeBtn");
+const voiceBtn = document.getElementById("voiceBtn");
+const micBtn = document.getElementById("micBtn");
+
+/* ---------------- RATE LIMIT ---------------- */
+
+function canSend(){
+
+const now = Date.now();
+requests = requests.filter(t => now - t < 60000);
+
+if(requests.length >= CONFIG.RATE_LIMIT){
+return false;
+}
+
+requests.push(now);
+return true;
+
+}
+
+/* ---------------- UI ---------------- */
+
+function addMessage(role,text){
+
+const div = document.createElement("div");
+div.className = role === "user" ? "text-right" : "text-left";
+
+div.innerHTML = `
+<div class="bubble inline-block p-3 rounded-xl max-w-[80%]
+${role === "user" ? "bg-purple-600" : "bg-white/5 border border-white/10"}">
+${text}
+</div>
+`;
+
+chatBox.appendChild(div);
+chatBox.scrollTop = chatBox.scrollHeight;
+
+}
+
+/* ---------------- SPEECH ---------------- */
+
+function speak(text){
+if(!voiceEnabled) return;
+const s = new SpeechSynthesisUtterance(text);
+speechSynthesis.speak(s);
+}
+
+/* ---------------- COMMANDS ---------------- */
+
+function handleCommands(msg){
+
+const m = msg.toLowerCase();
+
+if(m === "/clear"){
+chatBox.innerHTML = "";
+return true;
+}
+
+if(m === "/time"){
+addMessage("ai", new Date().toLocaleString());
+return true;
+}
+
+if(m === "/assistant"){
+mode = "assistant";
+modeBtn.innerText = "Mode: Assistant";
+return true;
+}
+
+if(m === "/tutor"){
+mode = "tutor";
+modeBtn.innerText = "Mode: Tutor";
+return true;
+}
+
+if(m.startsWith("/search")){
+addMessage("ai","🔎 Searching: " + msg.replace("/search",""));
+return true;
+}
+
+return false;
+
+}
+
+/* ---------------- AI ---------------- */
+
+async function getAIResponse(message){
+
+const systemPrompt =
+mode === "tutor"
+? "You are a teacher. Explain step by step simply."
+: "You are a smart assistant.";
+
+if(memory[message.toLowerCase()]){
+return memory[message.toLowerCase()];
+}
+
+try{
+
+const res = await fetch("http://localhost:3000/chat", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    message: message
+  })
+});
+
+const data = await res.json();
+return data.choices?.[0]?.message?.content || "No response";
+
+}catch(e){
+return "Connection error";
+}
+
+}
+
+/* ---------------- SEND ---------------- */
+
+async function sendMessage(){
+
+const msg = userInput.value.trim();
+if(!msg) return;
+
+if(!canSend()){
+addMessage("ai","⚠ Rate limit hit");
+return;
+}
+
+addMessage("user",msg);
+userInput.value="";
+
+const reply = await getAIResponse(msg);
+
+addMessage("ai",reply);
+speak(reply);
+
+}
+
+/* ---------------- VOICE INPUT ---------------- */
+
+if("webkitSpeechRecognition" in window){
+const rec = new webkitSpeechRecognition();
+rec.lang = "en-US";
+
+micBtn.onclick = () => rec.start();
+
+rec.onresult = (e)=>{
+userInput.value = e.results[0][0].transcript;
+};
+}
+
+/* ---------------- EVENTS ---------------- */
+
+sendBtn.onclick = sendMessage;
+
+userInput.addEventListener("keydown",(e)=>{
+if(e.key==="Enter") sendMessage();
+});
+
+modeBtn.onclick = ()=>{
+mode = mode === "assistant" ? "tutor" : "assistant";
+modeBtn.innerText = "Mode: " + mode;
+};
+
+voiceBtn.onclick = ()=>{
+voiceEnabled = !voiceEnabled;
+};
+
+};
+
+</script>
+
+</body>
+</html>
